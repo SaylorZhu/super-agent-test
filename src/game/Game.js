@@ -762,6 +762,8 @@ export class Game {
   togglePause() {
     if (this.state === "playing") {
       this.state = "paused";
+      // Avoid drifting toward a stale pointer position when play resumes.
+      this.input.clearPointer();
       this.ui.showPause();
     } else if (this.state === "paused") {
       this.resume();
