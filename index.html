@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="theme-color" content="#05060f" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23070d1c'/%3E%3Cpath d='M32 8 37 27 55 36 55 42 37 38 35 52 42 57 34 57 32 50 30 57 22 57 29 52 27 38 9 42 9 36 27 27Z' fill='%237df9ff'/%3E%3C/svg%3E"
+    />
+    <title>飞机大战 · Three.js Arcade</title>
+    <meta
+      name="description"
+      content="使用 three.js 打造的星战飞机大战：击落敌机、收集火力、挑战 Boss。"
+    />
+  </head>
+  <body>
+    <main id="game-shell">
+      <canvas id="game-canvas" aria-label="飞机大战游戏画面"></canvas>
+      <div class="scene-overlay" aria-hidden="true"></div>
+
+      <div id="hud" class="hud is-hidden" aria-live="polite">
+        <div class="hud-top">
+          <div class="hud-stat">
+            <span class="hud-label">得分</span>
+            <strong id="score-value" class="hud-value">00000</strong>
+          </div>
+          <div class="hud-stat hud-stat--power">
+            <span class="hud-label">火力</span>
+            <strong id="power-value" class="hud-value hud-value--power">Lv.1</strong>
+          </div>
+          <div class="hud-side">
+            <div id="lives" class="lives" aria-label="剩余机体"></div>
+            <button id="mute-button" class="icon-button" type="button" aria-label="切换静音">
+              <span class="icon-sound" aria-hidden="true">♪</span>
+            </button>
+            <button id="pause-button" class="icon-button" type="button" aria-label="暂停游戏">
+              <span aria-hidden="true">Ⅱ</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="boss-bar" class="boss-bar is-hidden">
+          <div class="boss-meta">
+            <span>强敌</span>
+            <b id="boss-name">赤鸢母舰</b>
+            <span id="boss-percent">100%</span>
+          </div>
+          <div class="boss-track"><span id="boss-fill"></span></div>
+        </div>
+
+        <div id="toast" class="toast" role="status"></div>
+        <div id="warning" class="warning is-hidden">
+          <span class="warning-mark">!</span>
+          <span>警告 · 强敌接近</span>
+        </div>
+      </div>
+
+      <section id="menu" class="screen screen--menu">
+        <div class="panel menu-panel">
+          <p class="eyebrow">THREE.JS · ARCADE SHOOTER</p>
+          <h1 class="title">飞机大战</h1>
+          <p class="tagline">穿越星海，击落来犯的敌机与母舰。</p>
+
+          <button id="start-button" class="primary-button" type="button">
+            <span>开始游戏</span>
+            <span class="primary-button__hint">ENTER</span>
+          </button>
+
+          <ul class="controls" aria-label="操作说明">
+            <li><kbd>WASD</kbd><span>或</span><kbd>方向键</kbd><span>移动</span></li>
+            <li><kbd>鼠标</kbd><span>或</span><kbd>拖动</kbd><span>跟随移动</span></li>
+            <li><span>自动开火</span><span class="dot">·</span><kbd>P</kbd><span>暂停</span></li>
+            <li><kbd>M</kbd><span>静音</span><span class="dot">·</span><span>拾取 P 提升火力</span></li>
+          </ul>
+
+          <p class="best-line">
+            最高分 <b id="menu-best">00000</b>
+          </p>
+        </div>
+      </section>
+
+      <section id="pause" class="screen is-hidden">
+        <div class="panel small-panel">
+          <p class="eyebrow">PAUSED</p>
+          <h2 class="panel-title">任务暂停</h2>
+          <p class="panel-copy">调整呼吸，星海不会离开。</p>
+          <div class="button-row">
+            <button id="resume-button" class="primary-button" type="button">继续任务</button>
+            <button id="quit-button" class="ghost-button" type="button">返回首页</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="gameover" class="screen is-hidden">
+        <div class="panel small-panel">
+          <p class="eyebrow">MISSION OVER</p>
+          <h2 class="panel-title">任务终止</h2>
+          <p id="record-badge" class="record-badge is-hidden">新纪录</p>
+          <div class="result-grid">
+            <div>
+              <span class="result-label">本局得分</span>
+              <strong id="final-score" class="result-value">00000</strong>
+            </div>
+            <div>
+              <span class="result-label">历史最高</span>
+              <strong id="final-best" class="result-value result-value--best">00000</strong>
+            </div>
+          </div>
+          <div class="button-row">
+            <button id="restart-button" class="primary-button" type="button">再来一局</button>
+            <button id="home-button" class="ghost-button" type="button">返回首页</button>
+          </div>
+        </div>
+      </section>
+
+      <div id="error-message" class="error-message is-hidden" role="alert">
+        <p>当前浏览器无法启动 WebGL，请更换浏览器或开启硬件加速。</p>
+      </div>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
