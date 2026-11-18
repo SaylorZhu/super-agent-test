@@ -2,9 +2,7 @@ import * as THREE from "three";
 import { getGlowTexture } from "../models/planes.js";
 
 const coreGeometry = new THREE.OctahedronGeometry(0.95, 0);
-const ringGeometry = new THREE.TorusGeometry(1.45, 0.07, 6, 40);
-const glowQuad = new THREE.PlaneGeometry(1, 1);
-const glyphGeometry = new THREE.PlaneGeometry(2.4, 2.4);
+const ringGeometry = new THREE.TorusGeometry(1.45, 0.07, 8, 40);
 
 const coreMaterial = new THREE.MeshStandardMaterial({
   color: 0x5fffce,
@@ -19,15 +17,6 @@ const ringMaterial = new THREE.MeshBasicMaterial({
   color: 0x8dffd8,
   transparent: true,
   opacity: 0.65,
-  depthWrite: false,
-  blending: THREE.AdditiveBlending,
-});
-
-const glowMaterial = new THREE.MeshBasicMaterial({
-  map: getGlowTexture(),
-  color: 0x46ffc2,
-  transparent: true,
-  opacity: 0.55,
   depthWrite: false,
   blending: THREE.AdditiveBlending,
 });
@@ -63,22 +52,16 @@ function getGlyphTexture() {
   return glyphTexture;
 }
 
-const glyphMaterial = new THREE.MeshBasicMaterial({
-  map: getGlyphTexture(),
-  transparent: true,
-  depthWrite: false,
-});
-
 export class PowerUp {
-  constructor(scene, x, y) {
+  constructor(scene, x, y, z = 0) {
     this.scene = scene;
     this.age = 0;
-    this.radius = 2.1;
+    this.radius = 2.8;
     this.dead = false;
-    this.drift = (Math.random() - 0.5) * 8;
+    this.drift = (Math.random() - 0.5) * 14;
 
     const group = new THREE.Group();
-    group.position.set(x, y, 1);
+    group.position.set(x, y, z);
 
     this.core = new THREE.Mesh(coreGeometry, coreMaterial);
     group.add(this.core);
@@ -86,13 +69,30 @@ export class PowerUp {
     this.ring = new THREE.Mesh(ringGeometry, ringMaterial);
     group.add(this.ring);
 
-    const glow = new THREE.Mesh(glowQuad, glowMaterial);
-    glow.scale.set(6, 6, 1);
+    const glow = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: getGlowTexture(),
+        color: 0x46ffc2,
+        transparent: true,
+        opacity: 0.7,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    glow.scale.set(7, 7, 1);
     group.add(glow);
 
-    this.glyph = new THREE.Mesh(glyphGeometry, glyphMaterial);
-    this.glyph.position.z = 1.6;
-    group.add(this.glyph);
+    const glyph = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: getGlyphTexture(),
+        transparent: true,
+        depthWrite: false,
+      }),
+    );
+    glyph.scale.set(2.6, 2.6, 1);
+    glyph.position.z = 0.4;
+    group.add(glyph);
+    this.glyph = glyph;
 
     this.group = group;
     scene.add(group);
@@ -106,21 +106,41 @@ export class PowerUp {
     return this.group.position.y;
   }
 
-  get isOutside() {
-    return this.group.position.y < -70;
+  get z() {
+    return this.group.position.z;
   }
 
-  update(dt) {
+  get isOutside() {
+    const { x, y, z } = this.group.position;
+    return z > 20 || z < -350 || Math.abs(x) > 160 || Math.abs(y) > 160;
+  }
+
+  update(dt, player) {
     this.age += dt;
     const group = this.group;
-    group.position.y -= 15 * dt;
+    const dx = player.x - group.position.x;
+    const dy = player.y - group.position.y;
+    const dz = player.z - group.position.z;
+    const distance = Math.hypot(dx, dy, dz);
+    const pull = distance < 45 ? 42 : 0;
+
+    if (distance > 1e-3 && pull > 0) {
+      group.position.x += (dx / distance) * pull * dt;
+      group.position.y += (dy / distance) * pull * dt;
+      group.position.z += (dz / distance) * pull * dt;
+    }
+
+    // Slow forward drift plus a gentle lateral wobble so it reads in 3D.
+    group.position.z += 24 * dt;
     group.position.x += Math.sin(this.age * 2.2) * this.drift * dt;
+
     this.core.rotation.y += dt * 3.2;
     this.core.rotation.z += dt * 1.6;
+    this.ring.rotation.x += dt * 1.3;
     this.ring.rotation.z += dt * 1.1;
     const pulse = 1 + Math.sin(this.age * 8) * 0.09;
     this.ring.scale.setScalar(pulse);
-    this.glyph.scale.setScalar(pulse);
+    this.glyph.scale.setScalar(2.6 * pulse);
   }
 
   destroy() {

@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  basisFromDirection,
   circlesOverlap,
   difficultyAt,
   normalize,
+  normalize3D,
   pointOnCircle,
   rotate,
+  rotateAroundY,
+  segmentSphereOverlap,
+  spheresOverlap,
   weaponPattern,
 } from "../src/game/core/combat.js";
 
@@ -99,5 +104,65 @@ describe("vector helpers", () => {
     const point = pointOnCircle(0, 5);
     expect(point.x).toBeCloseTo(5);
     expect(point.y).toBeCloseTo(0);
+  });
+});
+
+describe("3D hit detection", () => {
+  it("separates spheres that are apart on the depth axis", () => {
+    const a = { x: 0, y: 0, z: 0, radius: 2 };
+    expect(spheresOverlap(a, { x: 0, y: 0, z: 4, radius: 1 })).toBe(false);
+    expect(spheresOverlap(a, { x: 0, y: 0, z: 2.9, radius: 1 })).toBe(true);
+  });
+
+  it("treats a missing z as the flat plane", () => {
+    expect(spheresOverlap({ x: 0, y: 0, radius: 2 }, { x: 3, y: 0, radius: 1 })).toBe(true);
+  });
+
+  it("catches fast projectiles that sweep through a target", () => {
+    const from = { x: 0, y: 0, z: 20 };
+    const to = { x: 0, y: 0, z: -20 };
+    expect(segmentSphereOverlap(from, to, { x: 0, y: 0, z: 0 }, 1)).toBe(true);
+    expect(segmentSphereOverlap(from, to, { x: 3, y: 0, z: 0 }, 1)).toBe(false);
+  });
+
+  it("only checks the travelled part of the segment", () => {
+    const from = { x: 0, y: 0, z: 20 };
+    const to = { x: 0, y: 0, z: 10 };
+    expect(segmentSphereOverlap(from, to, { x: 0, y: 0, z: 0 }, 2)).toBe(false);
+    expect(segmentSphereOverlap(from, to, { x: 0, y: 0, z: 10 }, 2)).toBe(true);
+  });
+
+  it("handles zero-length segments", () => {
+    expect(segmentSphereOverlap({ x: 1, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }, 2)).toBe(true);
+    expect(segmentSphereOverlap({ x: 5, y: 0, z: 0 }, { x: 5, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }, 2)).toBe(false);
+  });
+});
+
+describe("3D vector helpers", () => {
+  it("normalizes 3D vectors", () => {
+    const vector = normalize3D(0, 3, 4);
+    expect(vector.x).toBeCloseTo(0);
+    expect(vector.y).toBeCloseTo(0.6);
+    expect(vector.z).toBeCloseTo(0.8);
+  });
+
+  it("falls back to forward for an empty 3D vector", () => {
+    expect(normalize3D(0, 0, 0)).toEqual({ x: 0, y: 0, z: -1 });
+  });
+
+  it("rotates a direction around the vertical axis", () => {
+    const rotated = rotateAroundY(1, 0, 0, Math.PI / 2);
+    expect(rotated.x).toBeCloseTo(0);
+    expect(rotated.z).toBeCloseTo(-1);
+  });
+
+  it("builds an orthonormal firing basis", () => {
+    const { forward, right, up } = basisFromDirection(0, 0, -1);
+    expect(forward).toEqual({ x: 0, y: 0, z: -1 });
+    expect(right.x).toBeCloseTo(1);
+    expect(right.y).toBeCloseTo(0);
+    expect(up.y).toBeCloseTo(1);
+    expect(forward.x * right.x + forward.y * right.y + forward.z * right.z).toBeCloseTo(0);
+    expect(forward.x * up.x + forward.y * up.y + forward.z * up.z).toBeCloseTo(0);
   });
 });

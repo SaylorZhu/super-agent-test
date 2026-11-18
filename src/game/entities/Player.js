@@ -5,21 +5,28 @@ import { PLAYER } from "../constants.js";
 const lerp = THREE.MathUtils.lerp;
 const clamp = THREE.MathUtils.clamp;
 
+const FORWARD = new THREE.Vector3(0, 0, -1);
+const LOCAL_NOSE = new THREE.Vector3(0, 1, 0);
+
 export class Player {
   constructor(scene) {
     this.scene = scene;
-    this.group = createPlane("player");
-    this.group.position.set(0, -30, 0);
-    this.flames = getFlames(this.group);
+    this.group = new THREE.Group();
+    this.model = createPlane("player");
+    this.model.quaternion.setFromUnitVectors(LOCAL_NOSE, FORWARD);
+    this.model.scale.setScalar(PLAYER.scale);
+    this.group.add(this.model);
+    this.flames = getFlames(this.model);
     this.velocityX = 0;
+    this.velocityY = 0;
     this.time = 0;
     scene.add(this.group);
-    this.reset(0, -30);
+    this.reset(0, -11);
   }
 
   reset(x, y) {
     this.group.position.set(x, y, 0);
-    this.group.rotation.z = 0;
+    this.group.rotation.set(0, 0, 0);
     this.group.visible = true;
     this.lives = PLAYER.maxLives;
     this.weaponLevel = 1;
@@ -27,6 +34,7 @@ export class Player {
     this.fireCooldown = 0;
     this.alive = true;
     this.velocityX = 0;
+    this.velocityY = 0;
   }
 
   get x() {
@@ -35,6 +43,10 @@ export class Player {
 
   get y() {
     return this.group.position.y;
+  }
+
+  get z() {
+    return this.group.position.z;
   }
 
   get position() {
@@ -55,6 +67,7 @@ export class Player {
 
     const position = this.group.position;
     const previousX = position.x;
+    const previousY = position.y;
     const axis = controls.axis;
     let dx = 0;
     let dy = 0;
@@ -72,12 +85,20 @@ export class Player {
     position.y = clamp(position.y + dy, bounds.minY, bounds.maxY);
 
     const actualDx = position.x - previousX;
-    const speed = actualDx / Math.max(dt, 1e-4);
-    this.velocityX = lerp(this.velocityX, speed, 0.18);
+    const actualDy = position.y - previousY;
+    const speedX = actualDx / Math.max(dt, 1e-4);
+    const speedY = actualDy / Math.max(dt, 1e-4);
+    this.velocityX = lerp(this.velocityX, speedX, 0.18);
+    this.velocityY = lerp(this.velocityY, speedY, 0.18);
     this.group.rotation.z = lerp(
       this.group.rotation.z,
-      clamp(-this.velocityX * 0.0045, -0.42, 0.42),
+      clamp(-this.velocityX * 0.006, -0.5, 0.5),
       0.16,
+    );
+    this.group.rotation.x = lerp(
+      this.group.rotation.x,
+      clamp(this.velocityY * 0.0035, -0.16, 0.16),
+      0.14,
     );
 
     const flameBoost = 0.85 + Math.min(0.5, Math.abs(this.velocityX) / 220);
@@ -99,8 +120,9 @@ export class Player {
 
   glowMuzzle(offsetX, angle) {
     return {
-      x: this.group.position.x + offsetX * Math.cos(angle),
-      y: this.group.position.y + 3.4,
+      x: this.group.position.x + offsetX * Math.cos(angle) * 0.9,
+      y: this.group.position.y + 0.8,
+      z: this.group.position.z - 3.6,
     };
   }
 
