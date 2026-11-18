@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import {
   WORLD,
+  CAMERA,
   PLAYER,
   BOSS,
   STORAGE_KEYS,
@@ -10,8 +11,8 @@ import {
 import {
   weaponPattern,
   difficultyAt,
-  circlesOverlap,
-  normalize,
+  spheresOverlap,
+  segmentSphereOverlap,
 } from "./core/combat.js";
 import { Input } from "./core/Input.js";
 import { AudioEngine } from "./core/Audio.js";
@@ -29,6 +30,8 @@ const ENEMY_BURST_COLORS = {
   fighter: 0xd86bff,
   heavy: 0xffb454,
 };
+
+const clamp = THREE.MathUtils.clamp;
 
 function readBest() {
   try {
@@ -103,16 +106,23 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.1;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x04050d);
-    this.camera = new THREE.OrthographicCamera(-60, 60, 60, -60, 0.1, 500);
-    this.camera.position.set(0, 0, 100);
+    this.scene.background = new THREE.Color(0x03040b);
+    this.scene.fog = new THREE.FogExp2(0x03040b, 0.00075);
+
+    this.camera = new THREE.PerspectiveCamera(
+      CAMERA.fov,
+      window.innerWidth / Math.max(window.innerHeight, 1),
+      CAMERA.near,
+      CAMERA.far,
+    );
+    this.camera.position.set(CAMERA.position.x, CAMERA.position.y, CAMERA.position.z);
 
     this.createLights();
     this.background = new Background(this.scene);
-    this.explosions = new Explosions(this.scene);
+    this.explosions = new Explosions(this.scene, this.camera);
     this.player = new Player(this.scene);
 
     this.input = new Input(canvas, {
@@ -122,17 +132,8 @@ export class Game {
       onPointerDown: () => this.anchorTouchDrag(),
     });
 
-    this.bounds = {
-      minX: -55,
-      maxX: 55,
-      minY: -55,
-      maxY: 22,
-    };
-    this.spawnHalfWidth = 44;
-    this.pointerAnchor = { x: 0, y: this.bounds.minY + 9 };
-
     this.resize();
-    this.player.reset(0, this.bounds.minY + 9);
+    this.player.reset(0, -9);
     this.ui.showMenu(this.best);
 
     this.handleResize = () => this.resize();
@@ -152,18 +153,18 @@ export class Game {
   }
 
   createLights() {
-    this.scene.add(new THREE.AmbientLight(0x8ea8ff, 1.35));
+    this.scene.add(new THREE.AmbientLight(0x9fb8ff, 1.7));
 
-    const key = new THREE.DirectionalLight(0xffffff, 2.6);
-    key.position.set(35, 50, 80);
+    const key = new THREE.DirectionalLight(0xffffff, 2.9);
+    key.position.set(40, 70, 90);
     this.scene.add(key);
 
-    const rim = new THREE.DirectionalLight(0xff5c96, 1.15);
-    rim.position.set(-50, -25, 45);
+    const rim = new THREE.DirectionalLight(0xff5c96, 1.7);
+    rim.position.set(-70, -20, 50);
     this.scene.add(rim);
 
-    const fill = new THREE.DirectionalLight(0x58e8ff, 0.9);
-    fill.position.set(0, -55, 60);
+    const fill = new THREE.DirectionalLight(0x58e8ff, 1.2);
+    fill.position.set(0, -60, 80);
     this.scene.add(fill);
   }
 
@@ -174,28 +175,30 @@ export class Game {
     const height = window.innerHeight;
     this.renderer.setSize(width, height, false);
 
-    this.halfHeight = WORLD.halfHeight;
-    this.halfWidth = this.halfHeight * (width / Math.max(height, 1));
-
-    this.camera.left = -this.halfWidth;
-    this.camera.right = this.halfWidth;
-    this.camera.top = this.halfHeight;
-    this.camera.bottom = -this.halfHeight;
+    const aspect = width / Math.max(height, 1);
+    this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
 
-    const padding = WORLD.edgePadding;
-    this.bounds = {
-      minX: -this.halfWidth + padding,
-      maxX: this.halfWidth - padding,
-      minY: -this.halfHeight + padding,
-      maxY: this.halfHeight * 0.42,
-    };
-    this.spawnHalfWidth = Math.max(10, Math.min(this.halfWidth - 10, 44));
+    // Visible extents on the player's plane (z = 0), used for input mapping
+    // and to keep the ship and enemy lanes inside the frame.
+    const distance = CAMERA.position.z - WORLD.playerZ;
+    const halfHeight = Math.tan(THREE.MathUtils.degToRad(CAMERA.fov * 0.5)) * distance;
+    const halfWidth = halfHeight * aspect;
+    this.halfHeight = halfHeight;
+    this.halfWidth = halfWidth;
 
-    this.background.resize(this.halfWidth, this.halfHeight);
+    this.bounds = {
+      minX: -halfWidth * 0.64,
+      maxX: halfWidth * 0.64,
+      minY: WORLD.playerMinY,
+      maxY: WORLD.playerMaxY,
+    };
+    this.spawnHalfWidth = Math.max(7, halfWidth * 0.62);
+
+    this.background.resize(halfWidth, halfHeight);
 
     if (this.state === "menu") {
-      this.player.group.position.y = this.bounds.minY + 9;
+      this.player.group.position.y = this.bounds.minY + 3;
     }
   }
 
@@ -205,7 +208,7 @@ export class Game {
     this.time += dt;
 
     if (this.state !== "paused") {
-      this.background.update(dt, this.state === "playing" ? 1.25 : 0.55);
+      this.background.update(dt, this.state === "playing" ? 1.35 : 0.55);
       this.explosions.update(dt);
     }
 
@@ -218,17 +221,18 @@ export class Game {
     }
 
     this.updateShake(dt);
+    this.updateCamera();
     this.renderer.render(this.scene, this.camera);
   }
 
   updateMenu(dt) {
     const player = this.player;
-    const sway = Math.min(this.halfWidth * 0.26, 24);
+    const sway = Math.min(this.halfWidth * 0.55, 18);
     player.group.visible = true;
     player.group.position.x = Math.sin(this.time * 0.55) * sway;
-    player.group.position.y =
-      this.bounds.minY + 10 + Math.sin(this.time * 0.9) * 2.2;
-    player.group.rotation.z = Math.sin(this.time * 0.55) * 0.09;
+    player.group.position.y = this.bounds.minY + 3.4 + Math.sin(this.time * 0.9) * 1.1;
+    player.group.rotation.z = Math.sin(this.time * 0.55) * 0.12;
+    player.group.rotation.x = Math.sin(this.time * 0.7) * 0.05;
     player.idle(dt);
   }
 
@@ -259,12 +263,13 @@ export class Game {
       this.deathBurstTimer = 0.22;
       this.explosions.spawn(
         this.player.x + (Math.random() - 0.5) * 6,
-        this.player.y + (Math.random() - 0.5) * 6,
+        this.player.y + (Math.random() - 0.5) * 4,
+        this.player.z + (Math.random() - 0.5) * 4,
         {
           color: 0xffc46b,
           count: 18,
-          speed: 38,
-          size: 24,
+          speed: 42,
+          size: 5.5,
           life: 0.8,
           ring: Math.random() < 0.3,
           spread: 1.4,
@@ -289,6 +294,19 @@ export class Game {
     this.pointerAnchor = { x: this.player.x, y: this.player.y };
   }
 
+  /** Map normalised device coordinates onto the player's plane. */
+  pointerToWorld(nx, ny) {
+    const point = new THREE.Vector3(nx, ny, 0.5).unproject(this.camera);
+    const direction = point.sub(this.camera.position).normalize();
+    const dz = direction.z;
+    if (Math.abs(dz) < 1e-4) return { x: this.player.x, y: this.player.y };
+    const distance = (WORLD.playerZ - this.camera.position.z) / dz;
+    return {
+      x: this.camera.position.x + direction.x * distance,
+      y: this.camera.position.y + direction.y * distance,
+    };
+  }
+
   buildControls() {
     const pointer = this.input.pointer;
     const pointerActive = pointer.active;
@@ -296,16 +314,13 @@ export class Game {
 
     if (pointerActive) {
       if (pointer.type === "mouse") {
-        pointerWorld = {
-          x: pointer.x * this.halfWidth,
-          y: pointer.y * this.halfHeight,
-        };
+        pointerWorld = this.pointerToWorld(pointer.x, pointer.y);
       } else if (pointer.down) {
         // Relative drag: the ship follows the finger's travel, so the finger
         // never has to sit on top of the ship.
         pointerWorld = {
-          x: this.pointerAnchor.x + pointer.deltaX * this.halfWidth * 1.15,
-          y: this.pointerAnchor.y + pointer.deltaY * this.halfHeight * 1.15,
+          x: this.pointerAnchor.x + pointer.deltaX * this.halfWidth * 1.3,
+          y: this.pointerAnchor.y + pointer.deltaY * this.halfHeight * 1.3,
         };
       }
     }
@@ -326,8 +341,10 @@ export class Game {
         new Bullet(this.scene, {
           x: origin.x,
           y: origin.y,
+          z: origin.z,
           vx: Math.sin(shot.angle) * speed,
-          vy: Math.cos(shot.angle) * speed,
+          vy: 0,
+          vz: -Math.cos(shot.angle) * speed,
           radius: BULLET.playerRadius,
           damage: 1,
           friendly: true,
@@ -370,36 +387,43 @@ export class Game {
     }
 
     const x = (Math.random() * 2 - 1) * this.spawnHalfWidth;
-    const y = this.halfHeight + 10 + Math.random() * 8;
-    this.enemies.push(new Enemy(this, kind, { x, y }));
+    const z = WORLD.enemySpawnZ - Math.random() * 30;
+    const y = this.player.y + (Math.random() - 0.5) * 22;
+    const targetY = this.player.y + (Math.random() - 0.5) * 6;
+    this.enemies.push(new Enemy(this, kind, { x, y, z, targetY }));
 
-    // Early waves arrive as loose pairs so the opening minute stays lively.
+    // Early waves arrive as loose wing pairs so the opening minute stays lively.
     if (kind === "scout" && this.enemies.length < 22 && Math.random() < 0.34) {
-      const wingX = Math.max(
-        -this.spawnHalfWidth,
-        Math.min(this.spawnHalfWidth, x + (Math.random() < 0.5 ? -6 : 6)),
-      );
+      const wingX = clamp(x + (Math.random() < 0.5 ? -8 : 8), -this.spawnHalfWidth, this.spawnHalfWidth);
       this.enemies.push(
-        new Enemy(this, "scout", { x: wingX, y: y + 4, phase: Math.random() * Math.PI }),
+        new Enemy(this, "scout", {
+          x: wingX,
+          y: y + 3,
+          z: z - 10,
+          targetY,
+          phase: Math.random() * Math.PI,
+        }),
       );
     }
   }
 
   spawnFormation(difficulty) {
-    const center = (Math.random() * 2 - 1) * Math.max(0, this.spawnHalfWidth - 9);
-    const top = this.halfHeight + 12;
+    const center = (Math.random() * 2 - 1) * Math.max(0, this.spawnHalfWidth - 6);
+    const top = this.player.y + 4;
     const offsets = [
-      { x: -7, y: top + 2 },
-      { x: 0, y: top + 8 },
-      { x: 7, y: top + 2 },
+      { x: -8, y: -2, z: -6 },
+      { x: 0, y: 3, z: 0 },
+      { x: 8, y: -2, z: -6 },
     ];
 
     for (let i = 0; i < offsets.length; i += 1) {
       this.enemies.push(
         new Enemy(this, "scout", {
-          x: center + offsets[i].x,
-          y: offsets[i].y,
-          phase: i * 0.6,
+          x: clamp(center + offsets[i].x, -this.spawnHalfWidth, this.spawnHalfWidth),
+          y: top + offsets[i].y,
+          z: WORLD.enemySpawnZ + offsets[i].z,
+          targetY: this.player.y,
+          phase: i * 0.9,
         }),
       );
     }
@@ -408,7 +432,9 @@ export class Game {
       this.enemies.push(
         new Enemy(this, "fighter", {
           x: center,
-          y: top + 20,
+          y: top + 8,
+          z: WORLD.enemySpawnZ - 12,
+          targetY: this.player.y,
           phase: Math.random() * Math.PI,
         }),
       );
@@ -419,7 +445,7 @@ export class Game {
     for (const enemy of this.enemies) {
       if (enemy.dead) continue;
       enemy.update(dt, this);
-      if (enemy.y < -this.halfHeight - 12) {
+      if (enemy.z > WORLD.enemyDespawnZ) {
         enemy.destroy();
       }
     }
@@ -435,7 +461,7 @@ export class Game {
     for (const bullet of this.bullets) {
       if (bullet.dead) continue;
       bullet.update(dt);
-      if (bullet.isOutside(this.halfWidth, this.halfHeight)) {
+      if (bullet.isOutside()) {
         bullet.destroy();
       }
     }
@@ -444,34 +470,48 @@ export class Game {
   updatePowerUps(dt) {
     for (const powerUp of this.powerUps) {
       if (powerUp.dead) continue;
-      powerUp.update(dt);
+      powerUp.update(dt, this.player);
       if (powerUp.isOutside) powerUp.destroy();
     }
   }
 
   handleCollisions() {
     const player = this.player;
-    const playerHitbox = { x: player.x, y: player.y, radius: PLAYER.radius };
+    const playerHitbox = {
+      x: player.x,
+      y: player.y,
+      z: player.z,
+      radius: PLAYER.radius,
+    };
 
     // Power-ups can be picked up even while the respawn shield is active.
     if (player.alive) {
       for (const powerUp of this.powerUps) {
         if (powerUp.dead) continue;
-        if (!circlesOverlap(powerUp, playerHitbox)) continue;
+        if (!spheresOverlap(powerUp, playerHitbox)) continue;
         this.collectPowerUp(powerUp);
       }
     }
 
-    // Player bullets vs enemies and boss.
+    // Player bullets vs enemies and boss, swept so fast shots do not tunnel.
     for (const bullet of this.bullets) {
       if (!bullet.friendly || bullet.dead) continue;
 
-      if (this.boss && !this.boss.dead && circlesOverlap(bullet, this.boss)) {
+      if (
+        this.boss &&
+        !this.boss.dead &&
+        segmentSphereOverlap(
+          bullet.prev,
+          bullet.position,
+          this.boss,
+          this.boss.radius + bullet.radius,
+        )
+      ) {
         bullet.destroy();
         if (this.boss.takeDamage(bullet.damage)) {
           this.defeatBoss();
         } else {
-          this.explosions.spark(bullet.x, bullet.y, 0xff9ab0);
+          this.explosions.spark(bullet.x, bullet.y, bullet.z, 0xff9ab0);
           this.ui.updateBoss(this.boss.hp, this.boss.maxHp);
         }
         continue;
@@ -479,13 +519,22 @@ export class Game {
 
       for (const enemy of this.enemies) {
         if (enemy.dead) continue;
-        if (!circlesOverlap(bullet, enemy)) continue;
+        if (
+          !segmentSphereOverlap(
+            bullet.prev,
+            bullet.position,
+            enemy,
+            enemy.radius + bullet.radius,
+          )
+        ) {
+          continue;
+        }
 
         bullet.destroy();
         if (enemy.takeDamage(bullet.damage)) {
           this.destroyEnemy(enemy);
         } else {
-          this.explosions.spark(bullet.x, bullet.y);
+          this.explosions.spark(bullet.x, bullet.y, bullet.z);
         }
         break;
       }
@@ -496,7 +545,16 @@ export class Game {
     // Hostile bullets vs player.
     for (const bullet of this.bullets) {
       if (bullet.friendly || bullet.dead) continue;
-      if (!circlesOverlap(bullet, playerHitbox)) continue;
+      if (
+        !segmentSphereOverlap(
+          bullet.prev,
+          bullet.position,
+          playerHitbox,
+          PLAYER.radius + bullet.radius,
+        )
+      ) {
+        continue;
+      }
 
       bullet.destroy();
       this.hitPlayer();
@@ -505,32 +563,28 @@ export class Game {
 
     if (!player.alive || player.invulnerable > 0) return;
 
-    // Ramming enemies and the boss.
+    // Ramming enemies.
     for (const enemy of this.enemies) {
       if (enemy.dead) continue;
-      if (!circlesOverlap(enemy, playerHitbox)) continue;
+      if (!spheresOverlap(enemy, playerHitbox)) continue;
 
       this.destroyEnemy(enemy, { reward: false });
       this.hitPlayer();
       return;
     }
-
-    if (this.boss && !this.boss.dead && circlesOverlap(this.boss, playerHitbox)) {
-      this.hitPlayer();
-    }
   }
 
   destroyEnemy(enemy, { reward = true } = {}) {
     if (enemy.dead) return;
-    const { x, y } = enemy;
+    const { x, y, z } = enemy;
     const kind = enemy.kind;
     enemy.destroy();
 
-    this.explosions.spawn(x, y, {
+    this.explosions.spawn(x, y, z, {
       color: ENEMY_BURST_COLORS[kind] ?? 0xffa64d,
       count: kind === "heavy" ? 44 : kind === "fighter" ? 32 : 22,
-      speed: kind === "heavy" ? 58 : 44,
-      size: 22,
+      speed: kind === "heavy" ? 62 : 48,
+      size: kind === "heavy" ? 8 : 6,
       life: 0.75,
       ring: true,
       spread: kind === "heavy" ? 1.6 : 1,
@@ -543,7 +597,7 @@ export class Game {
       if (this.player.alive) {
         const dropChance = enemy.config.dropChance;
         if (Math.random() < dropChance) {
-          this.powerUps.push(new PowerUp(this.scene, x, y));
+          this.powerUps.push(new PowerUp(this.scene, x, y, z));
         }
       }
     }
@@ -555,11 +609,11 @@ export class Game {
 
     this.ui.setLives(player.lives);
     this.ui.setPower(player.weaponLevel);
-    this.explosions.spawn(player.x, player.y, {
+    this.explosions.spawn(player.x, player.y, player.z, {
       color: 0x7df9ff,
       count: 38,
       speed: 55,
-      size: 26,
+      size: 6.5,
       life: 0.9,
       ring: true,
       spread: 1.2,
@@ -575,11 +629,11 @@ export class Game {
     this.deathTimer = 1.6;
     this.deathBurstTimer = 0;
     this.player.group.visible = false;
-    this.explosions.spawn(this.player.x, this.player.y, {
+    this.explosions.spawn(this.player.x, this.player.y, this.player.z, {
       color: 0xffc46b,
       count: 70,
-      speed: 72,
-      size: 30,
+      speed: 78,
+      size: 8,
       life: 1.2,
       ring: true,
       spread: 2,
@@ -614,11 +668,11 @@ export class Game {
     }
 
     this.audio.powerUp();
-    this.explosions.spawn(powerUp.x, powerUp.y, {
+    this.explosions.spawn(powerUp.x, powerUp.y, powerUp.z, {
       color: 0x46ffc2,
       count: 20,
-      speed: 30,
-      size: 18,
+      speed: 32,
+      size: 4.5,
       life: 0.55,
       ring: false,
       spread: 0.6,
@@ -635,7 +689,7 @@ export class Game {
 
   defeatBoss() {
     if (!this.boss) return;
-    const { x, y } = this.boss;
+    const { x, y, z } = this.boss;
     this.boss.destroy();
     this.boss = null;
     this.ui.hideBoss();
@@ -643,21 +697,26 @@ export class Game {
     this.addShake(3.4);
     this.audio.explosion(1.6);
 
-    for (let i = 0; i < 9; i += 1) {
-      this.explosions.spawn(x + (Math.random() - 0.5) * 26, y + (Math.random() - 0.5) * 16, {
-        color: i % 3 === 0 ? 0xffe9a8 : 0xff5d86,
-        count: 30,
-        speed: 55,
-        size: 26,
-        life: 1,
-        ring: i % 2 === 0,
-        spread: 1.8,
-      });
+    for (let i = 0; i < 10; i += 1) {
+      this.explosions.spawn(
+        x + (Math.random() - 0.5) * 42,
+        y + (Math.random() - 0.5) * 28,
+        z + (Math.random() - 0.5) * 20,
+        {
+          color: i % 3 === 0 ? 0xffe9a8 : 0xff5d86,
+          count: 30,
+          speed: 58,
+          size: 7,
+          life: 1,
+          ring: i % 2 === 0,
+          spread: 1.8,
+        },
+      );
     }
 
     for (let i = 0; i < 2; i += 1) {
       this.powerUps.push(
-        new PowerUp(this.scene, x + (i === 0 ? -5 : 5), y),
+        new PowerUp(this.scene, x + (i === 0 ? -5 : 5), y, z),
       );
     }
 
@@ -674,13 +733,15 @@ export class Game {
     this.ui.setScore(this.score);
   }
 
-  spawnEnemyBullet(x, y, vx, vy, radius = BULLET.enemyRadius) {
+  spawnEnemyBullet(x, y, z, vx, vy, vz, radius = BULLET.enemyRadius) {
     this.bullets.push(
       new Bullet(this.scene, {
         x,
         y,
+        z,
         vx,
         vy,
+        vz,
         radius,
         damage: 1,
         friendly: false,
@@ -695,13 +756,35 @@ export class Game {
   updateShake(dt) {
     if (this.shake > 0.01) {
       this.shake *= Math.exp(-7 * dt);
-      this.camera.position.x = (Math.random() - 0.5) * this.shake;
-      this.camera.position.y = (Math.random() - 0.5) * this.shake;
     } else {
       this.shake = 0;
-      this.camera.position.x = 0;
-      this.camera.position.y = 0;
     }
+  }
+
+  updateCamera() {
+    const base = CAMERA.position;
+    const player = this.player;
+    const menu = this.state === "menu";
+    const follow = menu ? 0.26 : CAMERA.followX;
+    const followY = menu ? 0.26 : CAMERA.followY;
+    const drift = menu ? Math.sin(this.time * 0.25) * 1.6 : 0;
+    const shakeX = this.shake > 0 ? (Math.random() - 0.5) * this.shake : 0;
+    const shakeY = this.shake > 0 ? (Math.random() - 0.5) * this.shake : 0;
+    const px = player.group.position.x;
+    const py = player.group.position.y;
+
+    this.camera.position.set(
+      base.x + px * follow + drift + shakeX,
+      base.y + (py + 11) * followY + shakeY,
+      base.z,
+    );
+
+    this.camera.lookAt(
+      px * follow * 0.3 + shakeX * 0.6,
+      CAMERA.target.y + (py + 11) * 0.12 + shakeY * 0.6,
+      CAMERA.target.z,
+    );
+    this.camera.rotateZ(clamp(-player.velocityX * 0.00055, -0.06, 0.06));
   }
 
   startRun() {
@@ -716,9 +799,9 @@ export class Game {
     this.spawnTimer = 0.9;
     this.nextBossAt = BOSS.firstSpawnAt;
     this.shake = 0;
-    this.camera.position.set(0, 0, 100);
 
-    this.player.reset(0, this.bounds.minY + 9);
+    this.player.reset(0, -9);
+    this.player.group.rotation.set(0, 0, 0);
     this.input.clearPointer();
     this.ui.hideWarning();
 
@@ -747,8 +830,8 @@ export class Game {
     this.audio.uiClick();
     this.clearRun();
     this.state = "menu";
-    this.player.reset(0, this.bounds.minY + 9);
-    this.player.group.rotation.z = 0;
+    this.player.reset(0, this.bounds.minY + 3);
+    this.player.group.rotation.set(0, 0, 0);
     this.ui.showMenu(this.best);
   }
 

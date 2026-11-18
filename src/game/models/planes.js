@@ -79,36 +79,38 @@ export function getGlowTexture() {
   return glowTexture;
 }
 
-const glowQuad = new THREE.PlaneGeometry(1, 1);
 const glowMaterials = new Map();
 
 function getGlowMaterial(color) {
   if (!glowMaterials.has(color)) {
     glowMaterials.set(
       color,
-      new THREE.MeshBasicMaterial({
+      new THREE.SpriteMaterial({
         map: getGlowTexture(),
         color,
         transparent: true,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
-        side: THREE.DoubleSide,
       }),
     );
   }
   return glowMaterials.get(color);
 }
 
+/**
+ * Engine exhaust and accent glows are billboarded sprites so they keep facing
+ * the chase camera from any angle.
+ */
 function addGlow(parent, { name, x = 0, y = 0, z = 0, width = 1, height = 1, color, opacity = 1 }) {
   const material = getGlowMaterial(color).clone();
   material.opacity = opacity;
-  const mesh = new THREE.Mesh(glowQuad, material);
-  mesh.name = name ?? "glow";
-  mesh.position.set(x, y, z);
-  mesh.scale.set(width, height, 1);
-  mesh.renderOrder = 2;
-  parent.add(mesh);
-  return mesh;
+  const glow = new THREE.Sprite(material);
+  glow.name = name ?? "glow";
+  glow.position.set(x, y, z);
+  glow.scale.set(width, height, 1);
+  glow.renderOrder = 2;
+  parent.add(glow);
+  return glow;
 }
 
 function wingGeometry(span, thickness) {

@@ -6,22 +6,24 @@ const ringGeometry = new THREE.RingGeometry(0.72, 0.92, 56);
 const WHITE = new THREE.Color(0xffffff);
 
 /**
- * Lightweight particle system: one Points object per burst plus an optional
- * expanding shockwave ring. Everything is pooled by removal after its life.
+ * Lightweight 3D particle system: one Points object per burst, an expanding
+ * shockwave ring billboard and a hot core flash. Everything is removed once
+ * its lifetime ends.
  */
 export class Explosions {
-  constructor(scene) {
+  constructor(scene, camera) {
     this.scene = scene;
+    this.camera = camera;
     this.bursts = [];
     this.rings = [];
   }
 
-  spawn(x, y, options = {}) {
+  spawn(x, y, z = 0, options = {}) {
     const {
       color = 0xffa64d,
       count = 28,
       speed = 44,
-      size = 22,
+      size = 5,
       life = 0.72,
       ring = true,
       spread = 1,
@@ -34,17 +36,20 @@ export class Explosions {
     const tempColor = new THREE.Color();
 
     for (let i = 0; i < count; i += 1) {
-      const angle = Math.random() * Math.PI * 2;
+      // Even distribution over a sphere, flattened a little along the view.
+      const theta = Math.random() * Math.PI * 2;
+      const cosPhi = Math.random() * 2 - 1;
+      const sinPhi = Math.sqrt(1 - cosPhi * cosPhi);
       const speedFactor = 0.25 + Math.random() * 0.9;
       const distance = Math.random() * 1.2 * spread;
 
-      positions[i * 3] = Math.cos(angle) * distance;
-      positions[i * 3 + 1] = Math.sin(angle) * distance;
-      positions[i * 3 + 2] = (Math.random() - 0.5) * 0.8;
+      positions[i * 3] = Math.cos(theta) * sinPhi * distance;
+      positions[i * 3 + 1] = Math.sin(theta) * sinPhi * distance;
+      positions[i * 3 + 2] = cosPhi * distance;
 
-      velocities[i * 3] = Math.cos(angle) * speed * speedFactor;
-      velocities[i * 3 + 1] = Math.sin(angle) * speed * speedFactor;
-      velocities[i * 3 + 2] = (Math.random() - 0.5) * 12;
+      velocities[i * 3] = Math.cos(theta) * sinPhi * speed * speedFactor;
+      velocities[i * 3 + 1] = Math.sin(theta) * sinPhi * speed * speedFactor;
+      velocities[i * 3 + 2] = cosPhi * speed * speedFactor;
 
       tempColor.copy(baseColor).lerp(WHITE, Math.random() * 0.42);
       colors[i * 3] = tempColor.r;
@@ -64,11 +69,11 @@ export class Explosions {
       opacity: 1,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
-      sizeAttenuation: false,
+      sizeAttenuation: true,
     });
 
     const points = new THREE.Points(geometry, material);
-    points.position.set(x, y, 1);
+    points.position.set(x, y, z);
     points.frustumCulled = false;
     this.scene.add(points);
 
@@ -83,11 +88,11 @@ export class Explosions {
     });
 
     if (ring) {
-      this.spawnRing(x, y, color, spread);
+      this.spawnRing(x, y, z, color, spread);
     }
   }
 
-  spawnRing(x, y, color, spread = 1) {
+  spawnRing(x, y, z, color, spread = 1) {
     const material = new THREE.MeshBasicMaterial({
       color,
       transparent: true,
@@ -97,18 +102,32 @@ export class Explosions {
       side: THREE.DoubleSide,
     });
     const ring = new THREE.Mesh(ringGeometry, material);
-    ring.position.set(x, y, 0.5);
+    ring.position.set(x, y, z);
     ring.scale.setScalar(0.6 * spread);
     this.scene.add(ring);
-    this.rings.push({ mesh: ring, material, age: 0, life: 0.5, spread });
+
+    const flashMaterial = new THREE.SpriteMaterial({
+      map: getGlowTexture(),
+      color,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const flash = new THREE.Sprite(flashMaterial);
+    flash.position.set(x, y, z);
+    flash.scale.setScalar(3 * spread);
+    this.scene.add(flash);
+
+    this.rings.push({ mesh: ring, material, flash, flashMaterial, age: 0, life: 0.5, spread });
   }
 
-  spark(x, y, color = 0x8ff7ff) {
-    this.spawn(x, y, {
+  spark(x, y, z, color = 0x8ff7ff) {
+    this.spawn(x, y, z, {
       color,
       count: 7,
       speed: 22,
-      size: 12,
+      size: 2.2,
       life: 0.3,
       ring: false,
       spread: 0.3,
@@ -142,7 +161,7 @@ export class Explosions {
       }
       burst.geometry.attributes.position.needsUpdate = true;
       burst.material.opacity = Math.pow(1 - progress, 1.4);
-      burst.material.size = 22 * (1 - progress * 0.55);
+      burst.material.size = 5 * (1 - progress * 0.5);
     }
 
     for (let i = this.rings.length - 1; i >= 0; i -= 1) {
@@ -152,14 +171,19 @@ export class Explosions {
 
       if (progress >= 1) {
         this.scene.remove(ring.mesh);
+        this.scene.remove(ring.flash);
         ring.material.dispose();
+        ring.flashMaterial.dispose();
         this.rings.splice(i, 1);
         continue;
       }
 
       const scale = 0.6 * ring.spread + progress * 11 * ring.spread;
       ring.mesh.scale.setScalar(scale);
+      ring.mesh.quaternion.copy(this.camera.quaternion);
+      ring.flash.scale.setScalar((3 + progress * 46) * ring.spread);
       ring.material.opacity = Math.pow(1 - progress, 1.8) * 0.85;
+      ring.flashMaterial.opacity = Math.pow(1 - progress, 2) * 0.85;
     }
   }
 
@@ -173,7 +197,9 @@ export class Explosions {
 
     for (const ring of this.rings) {
       this.scene.remove(ring.mesh);
+      this.scene.remove(ring.flash);
       ring.material.dispose();
+      ring.flashMaterial.dispose();
     }
     this.rings.length = 0;
   }
